@@ -255,15 +255,18 @@ class Service(RPCClient, RPCServer):
             return {}
         return self.__nodes
 
-    def add_node(self, hostport=None, host=None, port=None, tag=None, verify=False):
+    def add_node(self, node=None, host=None, port=None, tag=None, verify=False):
         if self.__type == LOCAL:
             self._make_remote_service()
         if self.__type != REMOTE:
             print("Error: Can only add node to remote service")
             return
-        if not tag:
-            tag = self._new_anon_tag()
-        new_node = self.__class__().at(hostport, tag=tag, port=port, host=host)
+        if isinstance(node, self.__class__) and node.__type == REMOTE_NODE:
+            new_node = node
+        else:
+            if not tag:
+                tag = self._new_anon_tag()
+            new_node = self.__class__().at(node, tag=tag, port=port, host=host)
         self.__nodes[new_node._tag] = new_node
         if verify:
             try:
