@@ -2,7 +2,7 @@ import asyncio
 import pickle
 
 from .server import RPCServer
-from .util import log
+from .util import *
 from .exceptions import *
 from .common import *
 from .framework_common import *
@@ -14,102 +14,124 @@ NW_TIMEOUT=3
 
 class RPCClient():
 
-    def __init__(self, tag=None, loop=None, rpc_timeout=RPC_TIMEOUT, network_timeout=NW_TIMEOUT, **kwargs):
-        self._tag = tag or "RPCClient"
+    def __init__(self, hostport=None, host=None, port=None, rpc_timeout=RPC_TIMEOUT, network_timeout=NW_TIMEOUT, **kwargs):
+        if hostport:
+            host, port = load_addr(hostport)
         self._req_num = 0
         self._rpc_timeout = rpc_timeout
         self._network_timeout = network_timeout
+        self._host = host
+        self._port = port
+        self._conn = None
         self.__received = set()
-        self._loop = loop or get_event_loop()
 
-    async def call(self, fname, hostport, *args, **kwargs):
-        try:
-            host, port = hostport.split(':')
-        except ValueError:
-            raise RPCError("RPCClient.call: port not provided in hostport {}".format(hostport))
-        #  if not port:
-        #      raise RPCError("RPCClient.call: port must be provided for rpc call")
-        request = Request(fname, self, RPCServer(host=host, port=port), None, args, kwargs)
+    def sync_connect(self, server=None, host=None, port=None):
+        sync_await(self.connect(server, host, port))
+        return self
+
+    def connect(self, server=None, host=None, port=None):
+        if server:
+            if isinstance(server, str):
+                host, port = load_addr(server)
+            elif isinstance(server, RPCServer):
+                host = server._host
+                port = server._port
+        self._host = host or self._host
+        self._port = port or self._port
+        if not self._port:
+            raise RPCError("port number must be provided to connect to server")
+        self.close()
+        return self
+
+    async def _connect(self):
+        if not self._conn or self._conn[1].is_closing():
+            if not self._port:
+                raise RPCError("port number must be provided to connect to server")
+            try:
+                reader, writer = await asyncio.open_connection(
+                    host=self._host, port=self._port)
+            except Exception as e:
+                raise RPCConnectionError(
+                    f"Failed connecting to server ({self._host}, {self._port}): {e}.") from e
+            self._conn = reader, writer
+        return self._conn
+
+    def close(self):
+        if self._conn is not None:
+            _, writer = self._conn
+            if not writer.is_closing():
+                writer.close()
+
+
+    async def wait_closed(self):
+        if self._conn:
+            _, writer = self._conn
+            if writer.is_closing():
+                await writer.wait_closed()
+                self._conn = None
+
+    async def call(self, method, *args, **kwargs):
+        request = Request(method, None, args, kwargs)
         response = await self._remote_call(request)
         if response.exception:
             raise response.exception
         return response.result
 
-    def sync_call(self, fname, hostport, *args, **kwargs):
-        return sync_await(self.call(fname, hostport, *args, **kwargs))
+    def sync_call(self, method, *args, **kwargs):
+        result = sync_await(self.call(method, *args, **kwargs))
+        self.close()
+        return result
 
     async def _remote_call(self, request, response_Q=None, exception_Q=None):
+        reader, writer = await self._connect()
         if request.id is None:
             request.id = self._req_num
             self._req_num += 1
         response = Response.for_request(request)
-        # Generate connection with node
-        server = request.server
-        try:
-            reader, writer = await asyncio.open_connection(
-                host=server._host, port=server._port)
-        except Exception as e:
-            err = RPCConnectionError(
-                f"Failed connecting to {server}: {e}.", node=server)
-            if exception_Q:
-                await exception_Q.put(err)
-            else:
-                raise err from e
-            response.exception = err
-            return response
 
         #  Send rpc request
         request_bytes = pickle.dumps(request)
         writer.write(request_bytes)
-        writer.write(b"\r\n")
+        writer.write(SENTINEL)
         self.on_rpc_call(request)
         #  Receive rpc response and close connection
         try:
-            response_bytes = await asyncio.wait_for(reader.readuntil(b"\r\n"), timeout=self._network_timeout)
+            response_bytes = await asyncio.wait_for(reader.readuntil(SENTINEL), timeout=self._network_timeout)
         except asyncio.TimeoutError:
-            err = RPCConnectionTimeoutError(
-                f"Timeout waiting for server {server._tag}.", node=server)
+            err = RPCConnectionTimeoutError(f"Timeout waiting for server")
             if exception_Q:
                 await exception_Q.put(err)
             else:
                 raise err
             response.exception = err
             return response
-        finally:
-            writer.write_eof()
-            writer.close()
+        #  finally:
+        #      writer.write_eof()
+        #      writer.close()
 
         #  Parse response
-        response = pickle.loads(response_bytes.strip(b"\r\n"))
-        #  if response.exception:
-        #      #  Remote function returned error
-        #      if exception_Q:
-        #          await exception_Q.put(response.exception)
-        #      else:
-        #          raise result
-        #  Log
+        response = pickle.loads(response_bytes.strip(SENTINEL))
         self.on_rpc_returned(response)
-        #  Return response
         if response_Q:
             await response_Q.put(response)
-        await writer.wait_closed()
         return response
 
     def on_rpc_call(self, request):
-        req_desc = f"<{self._tag}, {request.server._tag}, {request.id}, {request.rpc_name}>"
+        req_desc = f"<{request.id}, {request.method}>"
         log("request", f"Sent request {req_desc}")
         #  super().on_rpc_call(request)
 
     def on_rpc_returned(self, response):
         #  super().on_rpc_returned(response)
         status = response.status if response.id not in self.__received else "discard"
-        res_desc = f"<{self._tag}, {response.server._tag}, {response.id}, {response.status}> {response.result}"
+        #  res_desc = f"<{self._tag}, {response.server._tag}, {response.id}, {response.status}> {response.result}"
+        res_desc = f"<{response.id}, {response.status}> {response.result}"
         log(status, f"Received {res_desc}")
         self.__received.add(response.id)
 
     #  Set timeouts
     def set_rpc_timeout(self, timeout):
-        self.__rpc_timeout = timeout
+        self._rpc_timeout = timeout
         return self
 
     def set_network_timeout(self, timeout):

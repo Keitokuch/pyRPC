@@ -31,4 +31,4 @@ def load_addr(hostport: str) -> Tuple[str, str]:
         host, port = hostport.split(':')
         return host, port
     except ValueError:
-        raise RPCError("port not provided in hostport {}".format(hostport))
+        raise RPCError("port number not found in hostport {}".format(hostport))

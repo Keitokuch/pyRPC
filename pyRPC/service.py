@@ -19,13 +19,12 @@ __all__ = ['Service', 'ReplicatedService']
 
 
 def make_rpc(func):
-    rpc_name = func.__name__
+    method = func.__name__
 
     @wraps(func)
     async def rpc(self, *args, **kwargs):
         exception_Q = asyncio.Queue(1)
-        request = Request(rpc_name, self,
-                          self, self._req_num, args=args, kwargs=kwargs)
+        request = Request(method, None, args=args, kwargs=kwargs)
         call = self._remote_call(request, exception_Q=exception_Q)
         try:
             ret = await asyncio.wait_for(call, timeout=self._rpc_timeout)
@@ -36,7 +35,7 @@ def make_rpc(func):
             except asyncio.QueueEmpty:
                 pass
             raise RPCTimeoutError(
-                f"RPC '{rpc_name}' to {self} timeout after {self._rpc_timeout}s")
+                f"RPC '{method}' to {self} timeout after {self._rpc_timeout}s")
         if ret.exception:
             raise ret.exception
         return ret.result
@@ -46,12 +45,12 @@ def make_rpc(func):
     return rpc
 
 def make_replica_rpc(func):
-    rpc_name = func.__name__
+    method = func.__name__
 
     @wraps(func)
     async def rpc(self, *args, **kwargs):
         exception_Q = asyncio.Queue(1)
-        call = self._replica_remote_call(rpc_name, args, kwargs, exception_Q=exception_Q)
+        call = self._replica_remote_call(method, args, kwargs, exception_Q=exception_Q)
         try:
             ret = await asyncio.wait_for(call, timeout=self._rpc_timeout)
         except asyncio.TimeoutError as e:
@@ -62,7 +61,7 @@ def make_replica_rpc(func):
             except asyncio.QueueEmpty:
                 pass
             raise RPCTimeoutError(
-                f"Replicated RPC '{rpc_name}' timeout after {self._rpc_timeout}s") from e
+                f"Replicated RPC '{method}' timeout after {self._rpc_timeout}s") from e
         if ret.exception:
             raise ret.exception
         return ret.result
@@ -71,12 +70,12 @@ def make_replica_rpc(func):
 
 
 def make_group_rpc(func):
-    rpc_name = func.__name__
+    method = func.__name__
 
     @wraps(func)
     async def rpc(self, *args, **kwargs):
         exception_Q = asyncio.Queue(1)
-        call = self._group_remote_call(rpc_name, args, kwargs, exception_Q=exception_Q)
+        call = self._group_remote_call(method, args, kwargs, exception_Q=exception_Q)
         try:
             ret = await asyncio.wait_for(call, timeout=self._rpc_timeout)
         except asyncio.TimeoutError as e:
@@ -87,17 +86,17 @@ def make_group_rpc(func):
             except asyncio.QueueEmpty:
                 pass
             raise RPCTimeoutError(
-                f"Group RPC '{rpc_name}' timeout after {self._rpc_timeout}s") from e
+                f"Group RPC '{method}' timeout after {self._rpc_timeout}s") from e
         try:
             while True:
                 err = exception_Q.get_nowait()
                 print(err)
         except asyncio.QueueEmpty:
             pass
-        for res in ret:
+        for _, res in ret.items():
             if res.exception:
                 print(res.exception)
-        return {res.server._tag: res.result for res in ret}
+        return {tag: res.result for tag, res in ret.items()}
     rpc._rpc = True
     return rpc
 
@@ -170,12 +169,7 @@ class Service(RPCClient, RPCServer):
 
     def __create_task(self, coro):
         if asyncio.iscoroutine(coro):
-            print(coro)
             self._tasks.append(self._loop.create_task(coro))
-            print(self._tasks)
-            print(self._loop)
-            print(asyncio.get_event_loop())
-            print(asyncio.get_running_loop())
         else:
             self._loop.call_soon(coro, ())
 
@@ -211,14 +205,13 @@ class Service(RPCClient, RPCServer):
         return super()._collect_rpcs()
 
     #  Return first response
-    async def _replica_remote_call(self, service, fname, args, kwargs, exception_Q=None):
+    async def _replica_remote_call(self, method, args, kwargs, exception_Q=None):
         responses = asyncio.Queue()
-        if not service.nodes:
-            return Response(fname, self, None, -1, result="No node available for requested service.")
-        for _, node in service.nodes.items():
-            request = Request(fname, self, node,
-                              self._req_num, args, kwargs)
-            asyncio.create_task(self._remote_call(
+        if not self.nodes:
+            return Response(method, self, None, -1, result="No node available for requested service.")
+        for _, node in self.nodes.items():
+            request = Request(method, self._req_num, args, kwargs)
+            asyncio.create_task(node._remote_call(
                 request, response_Q=responses, exception_Q=exception_Q))
         self._req_num += 1
         res = None
@@ -231,19 +224,22 @@ class Service(RPCClient, RPCServer):
         return res
 
     #  Wait for all responses
-    async def _group_remote_call(self, fname, args, kwargs, exception_Q=None):
-        responses = asyncio.Queue()
+    async def _group_remote_call(self, method, args, kwargs, exception_Q=None):
+        #  responses = asyncio.Queue()
         if not self.nodes:
             return []
-        results = []
+        results = {}
+        tasks = []
         for _, node in self.nodes.items():
-            request = Request(fname, self, node,
-                              self._req_num, args, kwargs)
+            request = Request(method, self._req_num, args, kwargs)
             self._req_num += 1
-            asyncio.create_task(self._remote_call(
-                request, response_Q=responses, exception_Q=exception_Q))
-        for _ in range(len(self.nodes)):
-            results.append(await responses.get())
+            task = (asyncio.create_task(node._remote_call(
+                request, response_Q=None, exception_Q=exception_Q)))
+            task.set_name(node._tag)
+            tasks.append(task)
+        for task in tasks:
+            await task
+            results[task.get_name()] = task.result()
         return results
 
     def remote(self):
@@ -447,12 +443,12 @@ class ReplicatedService(Service):
             return
         print(len(self.request_queue))
         for request, writer in self.request_queue:
-            log("apply_log", f"{request.rpc_name} {request.args}")
+            log("apply_log", f"{request.method} {request.args}")
             response = await self.process_request(request)
             response_bytes = pickle.dumps(response)
             if writer is not None:
                 writer.write(response_bytes)
-                writer.write(b"\r\n")
+                writer.write(SENTINEL)
         self.request_queue = []
         self._ready = True
 
@@ -491,7 +487,7 @@ class ReplicatedService(Service):
 
     def on_service_called(self, request):
         if self.is_primary and self._ready:
-            if request.rpc_name in self.__services:
+            if request.method in self.__services:
                 self.create_task(self.backups.append_log(request))
         super().on_service_called(request)
 
@@ -503,12 +499,12 @@ class ReplicatedService(Service):
     async def restore_peer(self, peer_node):
         self._ready = False
         for request, writer in self.request_queue:
-            log("apply_log", f"{request.rpc_name} {request.args}")
+            log("apply_log", f"{request.method} {request.args}")
             response = await self.process_request(request)
             response_bytes = pickle.dumps(response)
             if writer is not None:
                 writer.write(response_bytes)
-                writer.write(b"\r\n")
+                writer.write(SENTINEL)
         self.request_queue = []
         peer_node = self.backups.add_node(peer_node)
         cp = self.get_checkpoint()
@@ -548,22 +544,22 @@ class ReplicatedService(Service):
             #  sock = writer.get_extra_info("socket")
             #  while not reader.at_eof():
                 #  Read and parse rpc packet
-            request_bytes = await reader.readuntil(b"\r\n")
-            request_bytes = request_bytes.strip(b"\r\n")
+            request_bytes = await reader.readuntil(SENTINEL)
+            request_bytes = request_bytes.strip(SENTINEL)
             request = pickle.loads(request_bytes)
             #  Serve request
-            if request.rpc_name not in self.__rpcs:
-                log("Warning", request.rpc_name + " not found")
+            if request.method not in self.__rpcs:
+                log("Warning", request.method + " not found")
                 return
-            if request.rpc_name in self.__services:
+            if request.method in self.__services:
                 if not self._ready:
-                    #  log("Not ready", f"{request.rpc_name} {request.args} {request.id}")
+                    #  log("Not ready", f"{request.method} {request.args} {request.id}")
                     self.request_queue.append((request, writer))
                     return
             response = await self.process_request(request)
             response_bytes = pickle.dumps(response)
             writer.write(response_bytes)
-            writer.write(b"\r\n")
+            writer.write(SENTINEL)
             # EOF
             #  log("connection", "Connection dropped")
         except asyncio.CancelledError:

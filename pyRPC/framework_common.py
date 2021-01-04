@@ -1,7 +1,8 @@
 import asyncio
+from functools import wraps
 import queue
 import threading
-from functools import wraps
+from concurrent.futures import ThreadPoolExecutor
 
 from .exceptions import *
 
@@ -15,6 +16,8 @@ SERVICE_RPC = "_service_rpc"
 RPC_FLAG = "_rpc"
 SYNC_FLAG = "_sync"
 TASK_FLAG = "_task"
+
+SENTINEL = b'\x00\x00SENtiNeL\x00\x00ValUe\x00\x00'
 
 
 def rpc__(f):
@@ -40,10 +43,8 @@ def is_task(f):
 
 class Request:
 
-    def __init__(self, method, client, server, id=None, args=(), kwargs={}):
-        self.rpc_name = method
-        self.client = client
-        self.server = server
+    def __init__(self, method, id=-1, args=(), kwargs={}):
+        self.method = method
         self.id = id
         self.args = args
         self.kwargs = kwargs
@@ -51,10 +52,8 @@ class Request:
 
 class Response():
 
-    def __init__(self, rpc_name, client, server, id, status="error", result=None, exception=None):
-        self.rpc_name = rpc_name
-        self.client = client
-        self.server = server
+    def __init__(self, method, id, status="success", result=None, exception=None):
+        self.method = method
         self.id = id
         self.status = status
         self.result = result
@@ -62,7 +61,7 @@ class Response():
 
     @classmethod
     def for_request(cls, request):
-        return cls(request.rpc_name, request.client, request.server, request.id)
+        return cls(request.method, request.id)
 
 
 def get_event_loop():
@@ -73,9 +72,8 @@ def get_event_loop():
         asyncio.set_event_loop(loop)
     return loop
 
-
 #  Await a coroutine synchronously using another thread
-def sync_await(coro):
+def sync_awaitt(coro):
     async def thread_await(coro, return_Q):
         try:
             ret = await coro
@@ -95,6 +93,30 @@ def sync_await(coro):
     else:
         return ret
 
+pool = ThreadPoolExecutor(max_workers=2)
+
+def async_thread(loop):
+    loop.run_forever()
+
+loop = asyncio.new_event_loop()
+thread = threading.Thread(target=async_thread, args=(loop,))
+def sync_await(coro):
+    global loop, thread
+    if not thread.is_alive():
+        thread.start()
+    future = asyncio.run_coroutine_threadsafe(coro, loop)
+    result = future.result()
+    loop.stop()
+    return result
+    #  def thread_await(coro):
+    #      loop = asyncio.new_event_loop()
+    #      return loop.run_until_complete(coro)
+    #  global pool
+    #  future = pool.submit(thread_await, coro)
+    #  return future.result()
+    #  with ThreadPoolExecutor() as pool:
+    #      res = future.result()
+    #      return res
 
 #  Adapt an async function for sync call
 def make_sync(async_func):
