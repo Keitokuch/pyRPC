@@ -43,21 +43,23 @@ def is_task(f):
 
 class Request:
 
-    def __init__(self, method, id=-1, args=(), kwargs={}):
+    def __init__(self, method, id=-1, args=(), kwargs={}, data={}):
         self.method = method
         self.id = id
         self.args = args
         self.kwargs = kwargs
+        self.data = data
 
 
 class Response():
 
-    def __init__(self, method, id, status="success", result=None, exception=None):
+    def __init__(self, method, id, status="success", result=None, error=None, data={}):
         self.method = method
         self.id = id
         self.status = status
         self.result = result
-        self.exception = exception
+        self.error = error
+        self.data = data
 
     @classmethod
     def for_request(cls, request):
@@ -98,22 +100,15 @@ pool = ThreadPoolExecutor(max_workers=2)
 def async_thread(loop):
     loop.run_forever()
 
-loop = asyncio.new_event_loop()
-thread = threading.Thread(target=async_thread, args=(loop,))
+#  loop = asyncio.new_event_loop()
+#  thread = threading.Thread(target=async_thread, args=(loop,))
 def sync_await(coro):
-    global loop, thread
-    if not thread.is_alive():
-        thread.start()
-    future = asyncio.run_coroutine_threadsafe(coro, loop)
-    result = future.result()
-    loop.stop()
-    return result
-    #  def thread_await(coro):
-    #      loop = asyncio.new_event_loop()
-    #      return loop.run_until_complete(coro)
-    #  global pool
-    #  future = pool.submit(thread_await, coro)
-    #  return future.result()
+    def thread_await(coro):
+        loop = asyncio.new_event_loop()
+        return loop.run_until_complete(coro)
+    global pool
+    future = pool.submit(thread_await, coro)
+    return future.result()
     #  with ThreadPoolExecutor() as pool:
     #      res = future.result()
     #      return res

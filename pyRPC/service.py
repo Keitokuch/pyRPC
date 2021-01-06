@@ -110,7 +110,7 @@ class Service(RPCClient, RPCServer):
         tag = tag or self.__default_tag()
         loop = loop or asyncio.get_event_loop()
         self.__debug = debug
-        super(Service, self).__init__(tag=tag, loop=loop, **kwargs)
+        super(Service, self).__init__()
         super(RPCClient, self).__init__(tag=tag, host=host, port=port, loop=loop, debug=debug, **kwargs)
         self._tag = tag
         self._loop = loop
