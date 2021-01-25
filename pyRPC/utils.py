@@ -1,17 +1,33 @@
+import asyncio
 import time
+import threading
 from typing import Tuple
 
 from .exceptions import *
 
 
-__all__ = ['log', 'load_addr']
+__all__ = ['log', 'load_addr', 'start_loop_in_thread']
 
 log_init = False
 
 def timestamp():
     return time.time_ns()
-    #  from datetime import datetime
-    #  return datetime.now().isoformat(timespec='milliseconds')
+#  from datetime import datetime
+#  return datetime.now().isoformat(timespec='milliseconds')
+
+def async_worker(loop: asyncio.AbstractEventLoop):
+    asyncio.set_event_loop(loop)
+    loop.run_forever()
+
+
+def start_loop_in_thread(loop=None, daemon: bool=True, debug: bool=None):
+    loop = loop or asyncio.new_event_loop()
+    if debug is not None:
+        loop.set_debug(debug)
+    loop_thread = threading.Thread(target=async_worker, args=(loop,))
+    loop_thread.daemon = daemon
+    loop_thread.start()
+    return loop
 
 
 def log(event, msg):

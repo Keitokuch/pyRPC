@@ -1,6 +1,6 @@
 from pyRPC import RPCServer
 
-server = RPCServer(tag="testserver", debug=True)
+server = RPCServer(tag="testserver")
 
 state = 0
 
@@ -24,4 +24,4 @@ def plus(a, b):
 def minus(a, b):
     return a - b
 
-server.run(port=12315)
+server.run(port=12315, debug=False)

@@ -1,9 +1,18 @@
 import asyncio
 from functools import wraps
+from typing import Any, Optional
 
 from .framework_common import *
 
-__all__ = ['rpc', 'task', 'sync_await', 'sync']
+__all__ = ['rpc', 'task', 'sync_await', 'sync', 'Request', 'Response', 'use_sync_service']
+
+
+sync_service = True
+
+
+def use_sync_service(sync: bool):
+    global sync_service
+    sync_service = sync
 
 
 def rpc(f):
@@ -27,3 +36,33 @@ def task(f):
 def sync(f):
     setattr(f, SYNC_FLAG, True)
     return f
+
+class Request:
+
+    def __init__(self, method: str, id: Optional[int]=-1, args: tuple=(), kwargs: dict={}, data: dict={}):
+        self.method:    str = method
+        self.id:        Optional[int] = id
+        self.args:      tuple = args
+        self.kwargs:    dict = kwargs
+        self.data:      dict = data
+
+    def __str__(self):
+        return "<{}, {}>".format(self.id, self.method)
+
+
+class Response():
+
+    def __init__(self, method: str, id: Optional[int], status: str="success", result: Any=None, error: Optional[Exception]=None, data: dict={}):
+        self.method:    str = method
+        self.id:        Optional[int] = id
+        self.status:    str = status
+        self.result:    Any = result
+        self.error:     Optional[Exception] = error
+        self.data:      dict[str, Any] = data
+
+    def __str__(self):
+        return "<{}, {}> {}".format(self.id, self.status, self.result)
+
+    @classmethod
+    def for_request(cls, request: Request):
+        return cls(request.method, request.id)
