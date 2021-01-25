@@ -2,6 +2,7 @@ import asyncio
 from asyncio.streams import StreamReader, StreamWriter
 from inspect import ismethod
 import pickle
+from pyRPC.protocols import RPCServerProtocol
 import socket
 import logging
 import traceback
@@ -58,11 +59,13 @@ class RPCServer():
         self._port = port or self._port
 
         if to_thread:
-            self._loop = start_loop_in_thread(False, self._debug)
+            self._loop = start_loop_in_thread(self._loop, daemon=False, debug=self._debug)
             self._loop.create_task(self._init_task())
         else:
             try:
+                self._loop = self._loop or get_event_loop()
                 asyncio.set_event_loop(self._loop)
+                self._loop.create_task(self._init_task())
                 self._loop.run_forever()
             except (KeyboardInterrupt, SystemExit, NodeStopException):
                 self._clean_up()
@@ -103,7 +106,9 @@ class RPCServer():
         port = port or self._port
         if port is None:
             port = 0
-        self._listener = await asyncio.start_server(self._serve_remote_call, host=host, port=port, family=socket.AF_INET)
+        #  self._listener = await asyncio.start_server(self._serve_remote_call, host=host, port=port, family=socket.AF_INET)
+        self._listener = await self._loop.create_server(
+            lambda: RPCServerProtocol(self), host=host, port=port, family=socket.AF_INET)
         self.__sock = self._listener.sockets[0]
         if not self._host:
             self._host = self.__sock.getsockname()[0]
@@ -111,17 +116,34 @@ class RPCServer():
             self._port = self.__sock.getsockname()[1]
         print(f"{self._tag} Listening: {self.__sock.getsockname()}", flush=True)
 
+    async def _handle_request(self, request: Request):
+        response = Response.for_request(request)
+        try:
+            if request.method in self._rpcs:
+                self._on_rpc_called(request)
+                response = await self._process_request(request)
+                self._on_rpc_return(response)
+            else:
+                err = RPCNotFoundError(f"RPC <{request.method}> not found in {self._tag}")
+                response.error = err
+                #  print(err)
+        except asyncio.CancelledError:
+            response.status = 'error'
+            response.error = RPCError('RPCServer closed')
+        finally:
+            return response
+
     async def _serve_remote_call(self, reader: StreamReader, writer: StreamWriter):
         """ callback function of asyncio tcp server """
         request = None
+        from .protocols import PickleProtocol
+        protocol = PickleProtocol(reader, writer)
         try:
-            #  sock = writer.get_extra_info("socket")
-            while not reader.at_eof():
-                #  Read and parse rpc packet
-                request_bytes = await reader.readuntil(SENTINEL)
-                request = pickle.loads(request_bytes.strip(SENTINEL))
+            while True:
+                request = await protocol.read_request()
+                if request is None:
+                    break
                 response = Response.for_request(request)
-                #  Serve request
                 try:
                     if request.method in self._rpcs:
                         self._on_rpc_called(request)
@@ -135,27 +157,22 @@ class RPCServer():
                     response.status = 'error'
                     response.error = RPCError('RPCServer closed')
                 finally:
-                    response_bytes = pickle.dumps(response)
-                    writer.write(response_bytes)
-                    writer.write(SENTINEL)
-                    request = None
+                    await protocol.write_response(response)
             # EOF
             #  log("connection", "Connection dropped")
         except asyncio.CancelledError:
             writer.write_eof()
             return
-        except asyncio.IncompleteReadError:
-            pass
-        except ConnectionResetError as e:
-            log("WARN", f"Connection dropped")
         except Exception as e:
             print(request, e)
 
     def _on_rpc_called(self, request):
-        log(request.method, f"Received request {request}")
+        #  log(request.method, f"Received request {request}")
+        return
 
     def _on_rpc_return(self, response):
-        log(response.status, f"Sent response {response}")
+        #  log(response.status, f"Sent response {response}")
+        return
 
     async def _process_request(self, request):
         #  Call service func/coro and send result back
@@ -169,7 +186,9 @@ class RPCServer():
             #      result = await rpc(*request.args, **request.kwargs)
             #  else:
             #      result = rpc(*request.args, **request.kwargs)
-            result = await asyncio.get_running_loop().run_in_executor(rpc, *request.args, **request.kwargs)
+            result = await self._loop.run_in_executor(
+                None, rpc, *request.args, **request.kwargs)
+            #  result = rpc(*request.args, **request.kwargs)
         except Exception as e:
             #  Catch any exception raised in rpc function
             _name = self.__class__.__name__
@@ -198,6 +217,6 @@ class RPCServer():
 
     def __getstate__(self):
         return {"_tag": self._tag, "_host": self._host, "_port": self._port}
-    
+
     def __str__(self):
         return "{}({}, {})".format(self._tag, self._host, self._port)

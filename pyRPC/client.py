@@ -1,8 +1,10 @@
 import asyncio
 import pickle
+from pyRPC.protocols import RPCClientProtocol
 
 from .server import RPCServer
 from .utils import *
+from .config import *
 from .exceptions import *
 from .common import *
 from .framework_common import *
@@ -14,7 +16,7 @@ NW_TIMEOUT=3
 
 class RPCClient():
 
-    def __init__(self, hostport=None, host=None, port=None, loop=None, debug=False, rpc_timeout=RPC_TIMEOUT, network_timeout=NW_TIMEOUT, **kwargs):
+    def __init__(self, hostport=None, host=None, port=None, loop=None, debug=False, rpc_timeout=RPC_TIMEOUT, network_timeout=NW_TIMEOUT, protocol=None, **kwargs):
         if hostport:
             host, port = load_addr(hostport)
         self._req_num = 0
@@ -25,6 +27,7 @@ class RPCClient():
         self._loop = loop or asyncio.get_event_loop()
         self._debug = debug
         self._conn = None
+        self._protocol_factory = protocol or RPCClientProtocol
         self.__received = set()
 
     def connect(self, hostport=None, host=None, port=None):
@@ -37,18 +40,35 @@ class RPCClient():
         self.close()
         return self
 
-    async def _get_connection(self):
-        if self._conn is None or self._conn[0].at_eof() or self._conn[1].is_closing():
+    #  async def _get_connection(self):
+    #      if self._conn is None or self._conn[0].at_eof() or self._conn[1].is_closing():
+    #          if not self._port:
+    #              raise RPCError("port number must be provided to connect to server")
+    #          try:
+    #              reader, writer = await asyncio.open_connection(
+    #                  host=self._host, port=self._port)
+    #          except Exception as e:
+    #              raise RPCConnectionError(
+    #                  f"Failed connecting to server ({self._host}, {self._port}).") from e
+    #          self._conn = reader, writer
+    #          #  self._connection = self._protocol()
+    #      return self._conn
+
+    async def _get_protocol(self):
+        if self._conn is None or self._conn[0].is_closing():
             if not self._port:
                 raise RPCError("port number must be provided to connect to server")
             try:
-                reader, writer = await asyncio.open_connection(
-                    host=self._host, port=self._port)
+                #  reader, writer = await asyncio.open_connection(
+                #      host=self._host, port=self._port)
+                transport, protocol = await self._loop.create_connection(
+                    self._protocol_factory, host=self._host, port=self._port)
             except Exception as e:
                 raise RPCConnectionError(
                     f"Failed connecting to server ({self._host}, {self._port}).") from e
-            self._conn = reader, writer
-        return self._conn
+            self._conn = transport, protocol
+            #  self._connection = self._protocol()
+        return self._conn[1]
 
     def close(self):
         if self._conn is not None:
@@ -72,7 +92,8 @@ class RPCClient():
         return response.result
 
     async def _remote_call(self, request, response_Q=None, exception_Q=None):
-        reader, writer = await self._get_connection()
+        #  reader, writer = await self._get_connection()
+        protocol = await self._get_protocol()
         if request.id is None:
             request.id = self._req_num
             self._req_num += 1
@@ -80,26 +101,21 @@ class RPCClient():
 
         #  Send rpc request
         self._on_rpc_call(request)
-        request_bytes = pickle.dumps(request)
-        writer.write(request_bytes)
-        writer.write(SENTINEL)
+        #  await protocol.write_request(request)
         #  Receive rpc response and close connection
         try:
-            response_bytes = await asyncio.wait_for(reader.readuntil(SENTINEL), timeout=self._network_timeout)
+            #  response = await asyncio.wait_for(
+            #      protocol.read_response(), timeout=self._network_timeout)
+            response = await asyncio.wait_for(protocol.call_one(request), timeout=self._network_timeout)
         except asyncio.TimeoutError:
-            err = RPCConnectionTimeoutError(f"Timed out waiting for server")
+            err = RPCConnectionTimeoutError(f"Timed out waiting for response")
             if exception_Q:
                 await exception_Q.put(err)
             else:
                 raise err
             response.error = err
             return response
-        #  finally:
-        #      writer.write_eof()
-        #      writer.close()
 
-        #  Parse response
-        response = pickle.loads(response_bytes.strip(SENTINEL))
         self._on_rpc_returned(response)
         if response_Q:
             await response_Q.put(response)

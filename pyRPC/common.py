@@ -49,6 +49,20 @@ class Request:
     def __str__(self):
         return "<{}, {}>".format(self.id, self.method)
 
+    def __getstate__(self):
+        state = { 'm': self.method, 'i': self.id }
+        if self.args: state['a'] = self.args
+        if self.kwargs: state['k'] = self.kwargs
+        if self.data: state['d'] = self.data
+        return state
+
+    def __setstate__(self, state):
+        self.method = state['m']
+        self.id = state['i']
+        self.args = state.get('a', ())
+        self.kwargs = state.get('k', {})
+        self.data = state.get('d', {})
+
 
 class Response():
 

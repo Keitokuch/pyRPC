@@ -24,4 +24,4 @@ def plus(a, b):
 def minus(a, b):
     return a - b
 
-server.run(port=12315, debug=False)
+server.run(port=12315, debug=True)
