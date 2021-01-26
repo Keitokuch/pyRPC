@@ -17,9 +17,10 @@ class RPCClient():
         self._network_timeout = network_timeout
         self._host = host
         self._port = port
-        self._loop = loop or get_event_loop()
         self._debug = debug
         self._conn = None
+        self._conn_lock = None
+        self._loop = loop or get_event_loop()
         self._protocol_factory = protocol or config.CLIENT_PROTOCOL
         self.__received = set()
 
@@ -56,11 +57,10 @@ class RPCClient():
                 #      host=self._host, port=self._port)
                 transport, protocol = await asyncio.get_event_loop().create_connection(
                     self._protocol_factory, host=self._host, port=self._port)
+                self._conn = transport, protocol
             except Exception as e:
                 raise RPCConnectionError(
                     f"Failed connecting to server ({self._host}, {self._port}).") from e
-            self._conn = transport, protocol
-            #  self._connection = self._protocol()
         return self._conn[1]
 
     def close(self):
@@ -86,7 +86,9 @@ class RPCClient():
 
     async def _remote_call(self, request, response_Q=None, exception_Q=None):
         #  reader, writer = await self._get_connection()
-        protocol = await self._get_protocol()
+        self._conn_lock = self._conn_lock or asyncio.Lock()
+        async with self._conn_lock:
+            protocol = await self._get_protocol()
         if request.id is None:
             request.id = self._req_num
             self._req_num += 1
@@ -94,7 +96,6 @@ class RPCClient():
 
         #  Send rpc request
         self._on_rpc_call(request)
-        #  await protocol.write_request(request)
         #  Receive rpc response and close connection
         try:
             #  response = await asyncio.wait_for(
