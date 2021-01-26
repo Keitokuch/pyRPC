@@ -119,15 +119,13 @@ class RPCClientProtocol(asyncio.Protocol):
         self._seq = 0
         self._curr_seq = None
         self._waiters = {}
-        self.lock = asyncio.Lock()
 
     def connection_lost(self, exc: Optional[Exception]) -> None:
         if exc:
             print('Exception in server connection:', exc)
         self._eof = True
 
-    async def call_one(self, request: Request) -> Response:
-        await self.lock.acquire()
+    async def request_one(self, request: Request) -> Response:
         request_bytes = pickle.dumps(request)
         datalen = len(request_bytes)
         self._seq += 1
@@ -138,7 +136,6 @@ class RPCClientProtocol(asyncio.Protocol):
         self.transport.write(RESERVED_B)
         self.transport.write(datalen.to_bytes(LEN_BYTES, BYTE_ORDER))
         self.transport.write(request_bytes)
-        self.lock.release()
         waiter = asyncio.get_event_loop().create_future()
         self._waiters[self._seq] = waiter
         data = await waiter
@@ -157,7 +154,6 @@ class RPCClientProtocol(asyncio.Protocol):
                     print('invalid bytes received')
                     return
                 self._curr_seq = int.from_bytes(seqbytes, BYTE_ORDER)
-                print('curr', self._curr_seq)
                 self._wait_bytes = int.from_bytes(lenbytes, BYTE_ORDER)
             else:
                 data = self.buffer[:self._wait_bytes]

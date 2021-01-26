@@ -20,8 +20,8 @@ class RPCClient():
         self._debug = debug
         self._conn = None
         self._conn_lock = None
-        self._loop = loop or get_event_loop()
-        self._protocol_factory = protocol or config.CLIENT_PROTOCOL
+        self._loop = loop
+        self.__protocol_factory = protocol or config.CLIENT_PROTOCOL
         self.__received = set()
 
     def connect(self, hostport=None, host=None, port=None):
@@ -56,7 +56,7 @@ class RPCClient():
                 #  reader, writer = await asyncio.open_connection(
                 #      host=self._host, port=self._port)
                 transport, protocol = await asyncio.get_event_loop().create_connection(
-                    self._protocol_factory, host=self._host, port=self._port)
+                    self.__protocol_factory, host=self._host, port=self._port)
                 self._conn = transport, protocol
             except Exception as e:
                 raise RPCConnectionError(
@@ -78,6 +78,7 @@ class RPCClient():
         return response.result
 
     def call(self, method, *args, **kwargs):
+        self._loop = self._loop or asyncio.new_event_loop()
         request = Request(method, None, args, kwargs)
         response = sync_await(self._remote_call(request), self._loop)
         if response.error:
@@ -85,7 +86,6 @@ class RPCClient():
         return response.result
 
     async def _remote_call(self, request, response_Q=None, exception_Q=None):
-        #  reader, writer = await self._get_connection()
         self._conn_lock = self._conn_lock or asyncio.Lock()
         async with self._conn_lock:
             protocol = await self._get_protocol()
@@ -95,12 +95,11 @@ class RPCClient():
         response = Response.for_request(request)
 
         #  Send rpc request
-        self._on_rpc_call(request)
-        #  Receive rpc response and close connection
         try:
-            #  response = await asyncio.wait_for(
-            #      protocol.read_response(), timeout=self._network_timeout)
-            response = await asyncio.wait_for(protocol.call_one(request), timeout=self._network_timeout)
+            self._on_rpc_call(request)
+            response = await asyncio.wait_for(
+                protocol.request_one(request), timeout=self._network_timeout)
+            self._on_rpc_returned(response)
         except asyncio.TimeoutError:
             err = RPCConnectionTimeoutError(f"Timed out waiting for response")
             if exception_Q:
@@ -109,8 +108,6 @@ class RPCClient():
                 raise err
             response.error = err
             return response
-
-        self._on_rpc_returned(response)
         if response_Q:
             await response_Q.put(response)
         return response
@@ -120,7 +117,6 @@ class RPCClient():
 
     def _on_rpc_returned(self, response):
         status = response.status if response.id not in self.__received else "discard"
-        #  res_desc = f"<{self._tag}, {response.server._tag}, {response.id}, {response.status}> {response.result}"
         log(status, f"Received {response}")
         self.__received.add(response.id)
 

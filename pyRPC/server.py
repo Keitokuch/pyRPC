@@ -29,7 +29,7 @@ class RPCServer():
         self._debug = debug
         self._to_schedule = []
         self._tasks = []
-        self._protocol_factory = protocol_factory or config.SERVER_PROTOCOL
+        self.__protocol_factory = protocol_factory or config.SERVER_PROTOCOL
 
     def _set_debug(self, debug):
         self._debug = debug
@@ -120,7 +120,7 @@ class RPCServer():
             port = 0
         #  self._listener = await asyncio.start_server(self._serve_remote_call, host=host, port=port, family=socket.AF_INET)
         self._listener = await self._loop.create_server(
-            lambda: self._protocol_factory(self), host=host, port=port, family=socket.AF_INET)
+            lambda: self.__protocol_factory(self), host=host, port=port, family=socket.AF_INET)
         self.__sock = self._listener.sockets[0]
         if not self._host:
             self._host = self.__sock.getsockname()[0]

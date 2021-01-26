@@ -107,7 +107,7 @@ def make_group_rpc(func):
 
 
 class Service(RPCClient, RPCServer):
-    def __init__(self, tag=None, host=None, port=None, loop=None, blocking=True, debug=False, remote_node=False, **kwargs):
+    def __init__(self, tag=None, host=None, port=None, loop=None, blocking=None, debug=False, remote_node=False, **kwargs):
         tag = tag or self.__default_tag()
         loop = loop or get_event_loop()
         RPCClient.__init__(self, loop=loop, debug=debug, **kwargs)
@@ -261,7 +261,6 @@ class Service(RPCClient, RPCServer):
                 setattr(self, fname, MethodType(rpc, self))
         self.__type = REMOTE_NODE
         start_loop_in_thread(self._loop, daemon=True)
-        print('made remote node')
         return self
 
     def at(self, hostport=None, host=None, port=None, tag: str=None):
