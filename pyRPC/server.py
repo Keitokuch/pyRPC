@@ -1,13 +1,12 @@
 import asyncio
 from asyncio.streams import StreamReader, StreamWriter
-from inspect import ismethod
-import pickle
-from pyRPC.protocols import RPCServerProtocol
 import socket
 import logging
 import traceback
 import sys
 from types import MethodType
+
+from . import config
 
 from .framework_common import *
 from .common import *
@@ -19,7 +18,7 @@ LOGGER = logging.getLogger("RPCServer")
 
 
 class RPCServer():
-    def __init__(self, tag=None, host=None, port=None, loop=None, debug=False, **kwargs):
+    def __init__(self, tag=None, host=None, port=None, loop=None, protocol_factory=None, debug=False, **kwargs):
         self._tag = tag or "RPCServer"
         self._host = host
         self._port = port
@@ -28,6 +27,9 @@ class RPCServer():
         self._rpcs = {}
         self._rpcs_collected = False
         self._debug = debug
+        self._to_schedule = []
+        self._tasks = []
+        self._protocol_factory = protocol_factory or config.SERVER_PROTOCOL
 
     def _set_debug(self, debug):
         self._debug = debug
@@ -46,6 +48,12 @@ class RPCServer():
 
     """ Async App """
 
+    def create_task(self, coro):
+        if self._loop:
+            self._tasks.append(self._loop.create_task(coro))
+        else:
+            self._to_schedule.append(coro)
+
     def run(self, host=None, port=None, debug=None):
         self._run(host, port, debug, False)
 
@@ -59,13 +67,14 @@ class RPCServer():
         self._port = port or self._port
 
         if to_thread:
-            self._loop = start_loop_in_thread(self._loop, daemon=False, debug=self._debug)
+            self._loop = start_loop_in_thread(self._loop, False, self._debug)
             self._loop.create_task(self._init_task())
         else:
+            self._loop = self._loop or get_event_loop()
+            self._loop.set_debug(self._debug)
+            asyncio.set_event_loop(self._loop)
+            self._loop.create_task(self._init_task())
             try:
-                self._loop = self._loop or get_event_loop()
-                asyncio.set_event_loop(self._loop)
-                self._loop.create_task(self._init_task())
                 self._loop.run_forever()
             except (KeyboardInterrupt, SystemExit, NodeStopException):
                 self._clean_up()
@@ -74,6 +83,8 @@ class RPCServer():
 
     async def _init_task(self):
         await self._listen(self._host, self._port)
+        for coro in self._to_schedule:
+            self._tasks.append(self._loop.create_task(coro))
         for objname in dir(self.__class__):
             func = getattr(self.__class__, objname)
             if is_task(func):
@@ -92,8 +103,9 @@ class RPCServer():
 
     def _clean_up(self):
         self._listener.close()
-        for task in asyncio.all_tasks(self._loop):
-            task.cancel()
+        for task in self._tasks:
+            if not task.cancelled() or not task.done():
+                task.cancel()
 
     """ Serving """
 
@@ -108,7 +120,7 @@ class RPCServer():
             port = 0
         #  self._listener = await asyncio.start_server(self._serve_remote_call, host=host, port=port, family=socket.AF_INET)
         self._listener = await self._loop.create_server(
-            lambda: RPCServerProtocol(self), host=host, port=port, family=socket.AF_INET)
+            lambda: self._protocol_factory(self), host=host, port=port, family=socket.AF_INET)
         self.__sock = self._listener.sockets[0]
         if not self._host:
             self._host = self.__sock.getsockname()[0]
@@ -167,11 +179,11 @@ class RPCServer():
             print(request, e)
 
     def _on_rpc_called(self, request):
-        #  log(request.method, f"Received request {request}")
+        log(request.method, f"Received request {request}")
         return
 
     def _on_rpc_return(self, response):
-        #  log(response.status, f"Sent response {response}")
+        log(response.status, f"Sent response {response}")
         return
 
     async def _process_request(self, request):

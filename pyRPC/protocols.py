@@ -3,8 +3,11 @@ import pickle
 from asyncio import transports
 from typing import Optional
 
+from . import server
 from .framework_common import *
 from .common import *
+
+__all__ = ['RPCServerProtocol', 'RPCClientProtocol']
 
 
 class AbstractProtocol:
@@ -59,7 +62,7 @@ class PickleProtocol(AbstractProtocol):
         await self.writer.drain()
 
 class RPCServerProtocol(asyncio.Protocol):
-    def __init__(self, server):
+    def __init__(self, server: server.RPCServer):
         self.server = server
         
     def connection_made(self, transport: transports.Transport) -> None:
@@ -69,10 +72,14 @@ class RPCServerProtocol(asyncio.Protocol):
         self._wait_bytes = HEADER_BYTES
         self._wait_header = True
 
+    def connection_lost(self, exc: Optional[Exception]) -> None:
+        if exc:
+            print('Client connection lost:', exc)
+        self._eof = True
+
     def data_received(self, data: bytes) -> None:
         assert not self._eof, 'data received after eof received'
         self.buffer.extend(data)
-        print(len(data))
         while len(self.buffer) >= self._wait_bytes:
             if self._wait_header:
                 magic, lenbytes = self.buffer[:MAGIC_BYTES], self.buffer[MAGIC_BYTES:HEADER_BYTES]
@@ -93,7 +100,7 @@ class RPCServerProtocol(asyncio.Protocol):
 
     def eof_received(self) -> Optional[bool]:
         self._eof = True
-        return True
+        return False    #  Closes transport
 
     async def _handle_request(self, request: Request):
         response = await self.server._handle_request(request)
@@ -113,6 +120,11 @@ class RPCClientProtocol(asyncio.Protocol):
         self._wait_bytes = 0
         self._wait_header = True
 
+    def connection_lost(self, exc: Optional[Exception]) -> None:
+        if exc:
+            print('Exception in server connection:', exc)
+        self._eof = True
+
     async def call_one(self, request):
         if self.waiter is not None:
             raise RPCError('Already waiting for one request.')
@@ -121,7 +133,7 @@ class RPCClientProtocol(asyncio.Protocol):
         self.transport.write(REQ_MAGIC)
         self.transport.write(datalen.to_bytes(LEN_BYTES, BYTE_ORDER))
         self.transport.write(request_bytes)
-        self.waiter = asyncio.get_running_loop().create_future()
+        self.waiter = asyncio.get_event_loop().create_future()
         self._wait_bytes = HEADER_BYTES
         await self.waiter
         data = self.buffer[:self._wait_bytes]
@@ -151,4 +163,4 @@ class RPCClientProtocol(asyncio.Protocol):
 
     def eof_received(self) -> Optional[bool]:
         self._eof = True
-        return True
+        return False    #  Closes transport

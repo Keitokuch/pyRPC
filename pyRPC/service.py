@@ -8,7 +8,7 @@ from typing import Any, Callable, Coroutine, List, Optional
 
 from aioconsole import ainput
 
-import pyRPC.common as common
+from . import config
 from .client import RPCClient
 from .server import RPCServer
 from .common import *
@@ -107,11 +107,7 @@ def make_group_rpc(func):
 
 
 class Service(RPCClient, RPCServer):
-    def __init__(self, tag=None, host=None, port=None, config=None, loop=None, sync=None, debug=False, remote_node=False, **kwargs):
-        if config:
-            tag = config["tag"]
-            host = config["host"]
-            port = config["port"]
+    def __init__(self, tag=None, host=None, port=None, loop=None, blocking=True, debug=False, remote_node=False, **kwargs):
         tag = tag or self.__default_tag()
         loop = loop or get_event_loop()
         RPCClient.__init__(self, loop=loop, debug=debug, **kwargs)
@@ -123,8 +119,8 @@ class Service(RPCClient, RPCServer):
         self._nodes = {}
         self.__type = LOCAL
         self.__name = self.__class__.__name__
-        self.__rpc_maker = make_group_rpc
-        self.__sync = sync if sync is not None else common.sync_service
+        #  self.__rpc_maker = make_group_rpc
+        self._blocking = blocking if blocking is not None else config.BLOCKING_SERVICE
         self._service_rpcs = {}
         self._hash = hash(self.__class__)
         self._anon_nodes_cnt = 0
@@ -199,11 +195,6 @@ class Service(RPCClient, RPCServer):
 
     """ Async App """
 
-    #  Create an async task to run later
-    def create_task(self, coro):
-        if asyncio.iscoroutine(coro):
-            self._tasks.append(self._loop.create_task(coro))
-
     def console(self, main: Callable[[List[str]], Any]=None):
         if main is not None and isfunction(main):
             setattr(self, 'main', main)
@@ -242,7 +233,7 @@ class Service(RPCClient, RPCServer):
             ret = sync_await(call_routine(method, args, kwargs), self._loop)
             return ret
 
-        if self.__sync or is_sync(func):
+        if self._blocking or is_sync(func):
             return sync_rpc
         return async_rpc
 

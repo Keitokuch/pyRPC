@@ -1,22 +1,15 @@
 import asyncio
-import pickle
-from pyRPC.protocols import RPCClientProtocol
 
-from .server import RPCServer
+from . import config
+
 from .utils import *
-from .config import *
 from .exceptions import *
 from .common import *
 from .framework_common import *
 
 
-RPC_TIMEOUT=3
-NW_TIMEOUT=3
-
-
 class RPCClient():
-
-    def __init__(self, hostport=None, host=None, port=None, loop=None, debug=False, rpc_timeout=RPC_TIMEOUT, network_timeout=NW_TIMEOUT, protocol=None, **kwargs):
+    def __init__(self, hostport=None, host=None, port=None, loop=None, debug=False, rpc_timeout=config.RPC_TIMEOUT, network_timeout=config.NW_TIMEOUT, protocol=None, **kwargs):
         if hostport:
             host, port = load_addr(hostport)
         self._req_num = 0
@@ -24,10 +17,10 @@ class RPCClient():
         self._network_timeout = network_timeout
         self._host = host
         self._port = port
-        self._loop = loop or asyncio.get_event_loop()
+        self._loop = loop or get_event_loop()
         self._debug = debug
         self._conn = None
-        self._protocol_factory = protocol or RPCClientProtocol
+        self._protocol_factory = protocol or config.CLIENT_PROTOCOL
         self.__received = set()
 
     def connect(self, hostport=None, host=None, port=None):
@@ -61,7 +54,7 @@ class RPCClient():
             try:
                 #  reader, writer = await asyncio.open_connection(
                 #      host=self._host, port=self._port)
-                transport, protocol = await self._loop.create_connection(
+                transport, protocol = await asyncio.get_event_loop().create_connection(
                     self._protocol_factory, host=self._host, port=self._port)
             except Exception as e:
                 raise RPCConnectionError(

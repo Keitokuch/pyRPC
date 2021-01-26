@@ -7,7 +7,6 @@ from .framework_common import *
 __all__ = ['rpc', 'task', 'sync_await', 'sync', 'Request', 'Response', 'use_sync_service']
 
 
-sync_service = True
 
 
 def use_sync_service(sync: bool):
