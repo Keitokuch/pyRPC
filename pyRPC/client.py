@@ -9,15 +9,14 @@ from .framework_common import *
 
 
 class RPCClient():
-    def __init__(self, hostport=None, host=None, port=None, loop=None, debug=False, rpc_timeout=config.RPC_TIMEOUT, network_timeout=config.NW_TIMEOUT, protocol=None, **kwargs):
+    def __init__(self, hostport=None, host=None, port=None, loop=None, rpc_timeout=config.RPC_TIMEOUT, network_timeout=config.NW_TIMEOUT, protocol=None, **kwargs):
         if hostport:
             host, port = load_addr(hostport)
+        self._host = host
+        self._port = port
         self._req_num = 0
         self._rpc_timeout = rpc_timeout
         self._network_timeout = network_timeout
-        self._host = host
-        self._port = port
-        self._debug = debug
         self._conn = None
         self._conn_lock = None
         self._loop = loop
@@ -34,27 +33,11 @@ class RPCClient():
         self.close()
         return self
 
-    #  async def _get_connection(self):
-    #      if self._conn is None or self._conn[0].at_eof() or self._conn[1].is_closing():
-    #          if not self._port:
-    #              raise RPCError("port number must be provided to connect to server")
-    #          try:
-    #              reader, writer = await asyncio.open_connection(
-    #                  host=self._host, port=self._port)
-    #          except Exception as e:
-    #              raise RPCConnectionError(
-    #                  f"Failed connecting to server ({self._host}, {self._port}).") from e
-    #          self._conn = reader, writer
-    #          #  self._connection = self._protocol()
-    #      return self._conn
-
     async def _get_protocol(self):
         if self._conn is None or self._conn[0].is_closing():
             if not self._port:
                 raise RPCError("port number must be provided to connect to server")
             try:
-                #  reader, writer = await asyncio.open_connection(
-                #      host=self._host, port=self._port)
                 transport, protocol = await asyncio.get_event_loop().create_connection(
                     self.__protocol_factory, host=self._host, port=self._port)
                 self._conn = transport, protocol
@@ -65,9 +48,9 @@ class RPCClient():
 
     def close(self):
         if self._conn is not None:
-            _, writer = self._conn
-            if not writer.is_closing():
-                writer.close()
+            transport, _ = self._conn
+            if not transport.is_closing():
+                transport.close()
                 self._conn = None
 
     async def async_call(self, method, *args, **kwargs):

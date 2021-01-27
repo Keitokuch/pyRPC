@@ -129,17 +129,19 @@ class RPCClientProtocol(asyncio.Protocol):
         request_bytes = pickle.dumps(request)
         datalen = len(request_bytes)
         self._seq += 1
+        seq = self._seq
         self.transport.write(REQ_MAGIC)
         self.transport.write(VERSION)
         self.transport.write(RESERVED_A)
-        self.transport.write(self._seq.to_bytes(SEQ_BYTES, BYTE_ORDER))
+        self.transport.write(seq.to_bytes(SEQ_BYTES, BYTE_ORDER))
         self.transport.write(RESERVED_B)
         self.transport.write(datalen.to_bytes(LEN_BYTES, BYTE_ORDER))
         self.transport.write(request_bytes)
         waiter = asyncio.get_event_loop().create_future()
-        self._waiters[self._seq] = waiter
+        self._waiters[seq] = waiter
         data = await waiter
         response = pickle.loads(bytes(data))
+        del self._waiters[seq]
         assert isinstance(response, Response), 'Illegal object received from server: Not a Response'
         return response
 

@@ -107,23 +107,21 @@ def make_group_rpc(func):
 
 
 class Service(RPCClient, RPCServer):
-    def __init__(self, tag=None, host=None, port=None, loop=None, blocking=None, debug=False, remote_node=False, **kwargs):
+    def __init__(self, tag=None, loop=None, blocking=None, debug=False, remote_node=False, **kwargs):
         tag = tag or self.__default_tag()
         loop = loop or get_event_loop()
         RPCClient.__init__(self, loop=loop, debug=debug, **kwargs)
-        RPCServer.__init__(self, tag=tag, host=host, port=port, loop=loop, debug=debug, **kwargs)
+        RPCServer.__init__(self, tag=tag, loop=loop, debug=debug, **kwargs)
         self._tag = tag
         self._loop = loop
-        self._debug = debug
-        self._tasks = []
         self._nodes = {}
         self.__type = LOCAL
         self.__name = self.__class__.__name__
-        #  self.__rpc_maker = make_group_rpc
         self._blocking = blocking if blocking is not None else config.BLOCKING_SERVICE
         self._service_rpcs = {}
         self._hash = hash(self.__class__)
         self._anon_nodes_cnt = 0
+        self._kwargs = kwargs
         if remote_node:
             self._make_remote_node()
 
@@ -254,13 +252,14 @@ class Service(RPCClient, RPCServer):
     def _make_remote_node(self):
         if self.__type != LOCAL:
             return
+        if self._blocking:
+            self._loop = start_loop_in_thread(self._loop, daemon=True, debug=self._debug)
         for fname in dir(self.__class__):
             func = getattr(self.__class__, fname)
             if is_rpc(func):
                 rpc = self._make_rpc(func, self._node_call)
                 setattr(self, fname, MethodType(rpc, self))
         self.__type = REMOTE_NODE
-        start_loop_in_thread(self._loop, daemon=True)
         return self
 
     def at(self, hostport=None, host=None, port=None, tag: str=None):
@@ -272,11 +271,6 @@ class Service(RPCClient, RPCServer):
         RPCClient.connect(self, host=host, port=port)
         self._make_remote_node()
         return self
-
-    #  @classmethod
-    #  def at(cls, hostport=None, host=None, port=None, tag: str=None):
-    #      print("cls at", cls)
-    #      return cls().at(hostport, tag, port, host)
 
     # Node group
 
@@ -350,20 +344,26 @@ class Service(RPCClient, RPCServer):
             return {}
         return self._nodes
 
-    def add_node(self, node=None, host=None, port=None, tag=None, verify=False):
+    def add_node(self, node_or_hostport=None, host=None, port=None, tag=None, verify=False):
         if self.__type == LOCAL:
             self._make_remote_service()
         if self.__type != REMOTE:
             print("Error: Can only add node to remote service")
             return
-        if isinstance(node, self.__class__) and node.__type == REMOTE_NODE:
-            if not node._tag:
-                node._tag = self._new_anon_tag()
-            new_node = node
+        if isinstance(node_or_hostport, Service):
+            node = node_or_hostport
+            if isinstance(node, self.__class__) and node.__type == REMOTE_NODE:
+                if not node._tag:
+                    node._tag = self._new_anon_tag()
+                new_node = node
+            else:
+                print(f"Error: node {node} can't be added to {self}")
+                return
         else:
+            hostport = node_or_hostport
             if not tag:
                 tag = self._new_anon_tag()
-            new_node = self.__class__().at(node, tag=tag, port=port, host=host)
+            new_node = self.__class__().at(hostport, tag=tag, port=port, host=host)
         self._nodes[new_node._tag] = new_node
         if verify:
             try:
@@ -409,7 +409,7 @@ class Service(RPCClient, RPCServer):
         pass
 
     def main(self, args):
-        print("main() not implemented.")
+        return "main() not implemented."
 
     def on_rpc_called(self, request: Request):
         pass
@@ -457,6 +457,8 @@ class Service(RPCClient, RPCServer):
     def from_dict(cls, dict):
         node = cls(tag=dict["tag"], host=dict["host"], port=dict["port"])
         return node
+
+
 
 
 class ReplicatedService(Service):
