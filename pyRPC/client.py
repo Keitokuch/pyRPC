@@ -14,12 +14,12 @@ class RPCClient():
             host, port = load_addr(hostport)
         self._host = host
         self._port = port
+        self._loop = loop
         self._req_num = 0
         self._rpc_timeout = rpc_timeout
         self._network_timeout = network_timeout
         self._conn = None
         self._conn_lock = None
-        self._loop = loop
         self.__protocol_factory = protocol or config.CLIENT_PROTOCOL
         self.__received = set()
 
@@ -61,7 +61,7 @@ class RPCClient():
         return response.result
 
     def call(self, method, *args, **kwargs):
-        self._loop = self._loop or asyncio.new_event_loop()
+        self._loop = self._loop or get_event_loop()
         request = Request(method, None, args, kwargs)
         response = sync_await(self._remote_call(request), self._loop)
         if response.error:

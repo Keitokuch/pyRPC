@@ -42,13 +42,12 @@ def is_task(f):
     return hasattr(f, TASK_FLAG)
 
 
+rpc_loop = None
 def get_event_loop():
-    try:
-        loop = asyncio.get_event_loop()
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        print('new looop')
-    return loop
+    global rpc_loop
+    if rpc_loop is None:
+        rpc_loop = asyncio.new_event_loop()
+    return rpc_loop
 
 
 def sync_await(coro, loop):

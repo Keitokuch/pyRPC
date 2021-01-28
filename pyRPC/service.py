@@ -107,13 +107,13 @@ def make_group_rpc(func):
 
 
 class Service(RPCClient, RPCServer):
-    def __init__(self, tag=None, loop=None, blocking=None, debug=False, remote_node=False, **kwargs):
+    def __init__(self, tag=None, loop=None, blocking=None, debug=False, **kwargs):
         tag = tag or self.__default_tag()
-        loop = loop or get_event_loop()
         RPCClient.__init__(self, loop=loop, debug=debug, **kwargs)
         RPCServer.__init__(self, tag=tag, loop=loop, debug=debug, **kwargs)
         self._tag = tag
         self._loop = loop
+        self._debug = debug
         self._nodes = {}
         self.__type = LOCAL
         self.__name = self.__class__.__name__
@@ -122,8 +122,6 @@ class Service(RPCClient, RPCServer):
         self._hash = hash(self.__class__)
         self._anon_nodes_cnt = 0
         self._kwargs = kwargs
-        if remote_node:
-            self._make_remote_node()
 
     """ Service related """
 
@@ -262,21 +260,25 @@ class Service(RPCClient, RPCServer):
         self.__type = REMOTE_NODE
         return self
 
-    def at(self, hostport=None, host=None, port=None, tag: str=None):
+    def at(self, hostport=None, tag=None, host=None, port=None):
+        if self.__type != LOCAL:
+            return
         if hostport:
             host, port = load_addr(hostport)
-        if not port:
+        self._host = host
+        self._port = port
+        if not self._port:
             raise RPCError("port must be provided to locate service")
-        self._tag = tag or self._tag
-        RPCClient.connect(self, host=host, port=port)
-        self._make_remote_node()
-        return self
+        self._tag = str(tag) or self._tag
+        return self._make_remote_node()
 
     # Node group
 
     def _make_remote_service(self):
         if self.__type != LOCAL:
             return
+        if self._blocking:
+            self._loop = start_loop_in_thread(self._loop, daemon=True, debug=self._debug)
         for fname in dir(self.__class__):
             func = getattr(self.__class__, fname)
             if is_rpc(func):
@@ -312,25 +314,6 @@ class Service(RPCClient, RPCServer):
                 results[call.get_name()] = call.result().result
         return results
 
-    #  Wait for all responses
-    async def _group_remote_call(self, method, args, kwargs, exception_Q=None):
-        #  responses = asyncio.Queue()
-        if not self.nodes:
-            return []
-        results = {}
-        tasks = []
-        for _, node in self.nodes.items():
-            request = Request(method, self._req_num, args, kwargs)
-            self._req_num += 1
-            task = (asyncio.create_task(node._remote_call(
-                request, response_Q=None, exception_Q=exception_Q)))
-            task.set_name(node._tag)
-            tasks.append(task)
-        for task in tasks:
-            await task
-            results[task.get_name()] = task.result()
-        return results
-
     def remote(self):
         if self.__type != LOCAL:
             print("Error: can't make {self} remote")
@@ -363,7 +346,9 @@ class Service(RPCClient, RPCServer):
             hostport = node_or_hostport
             if not tag:
                 tag = self._new_anon_tag()
-            new_node = self.__class__().at(hostport, tag=tag, port=port, host=host)
+            new_node = self.__class__()
+            Service.__init__(new_node, blocking=self._blocking, debug=self._debug)
+            new_node.at(hostport, tag=tag, port=port, host=host)
         self._nodes[new_node._tag] = new_node
         if verify:
             try:
@@ -403,7 +388,7 @@ class Service(RPCClient, RPCServer):
             print(f"Error: remove_node: node {tag} doesn't exist for service {self}")
             pass
 
-    """ Abstract Methods """
+    """ Template Methods """
 
     def clean_up(self):
         pass
@@ -452,12 +437,6 @@ class Service(RPCClient, RPCServer):
 
     def __hash__(self):
         return hash((self._tag, self._host, self._port))
-
-    @classmethod
-    def from_dict(cls, dict):
-        node = cls(tag=dict["tag"], host=dict["host"], port=dict["port"])
-        return node
-
 
 
 

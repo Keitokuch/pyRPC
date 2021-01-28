@@ -70,7 +70,7 @@ class RPCServer():
             self._loop = start_loop_in_thread(self._loop, False, self._debug)
             self._loop.create_task(self._init_task())
         else:
-            self._loop = self._loop or get_event_loop()
+            self._loop = self._loop or asyncio.new_event_loop()
             self._loop.set_debug(self._debug)
             asyncio.set_event_loop(self._loop)
             self._loop.create_task(self._init_task())

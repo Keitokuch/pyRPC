@@ -22,6 +22,8 @@ def async_worker(loop: asyncio.AbstractEventLoop):
 
 def start_loop_in_thread(loop=None, daemon: bool=True, debug: bool=None):
     loop = loop or asyncio.new_event_loop()
+    if loop.is_running():
+        return
     if debug is not None:
         loop.set_debug(debug)
     loop_thread = threading.Thread(target=async_worker, args=(loop,))
