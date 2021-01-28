@@ -68,7 +68,7 @@ class RPCServer():
 
         if to_thread:
             self._loop = start_loop_in_thread(self._loop, False, self._debug)
-            self._loop.create_task(self._init_task())
+            asyncio.run_coroutine_threadsafe(self._init_task(), self._loop)
         else:
             self._loop = self._loop or asyncio.new_event_loop()
             self._loop.set_debug(self._debug)
@@ -102,7 +102,8 @@ class RPCServer():
         print('Stopping..')
 
     def _clean_up(self):
-        self._listener.close()
+        if self._listener:
+            self._listener.close()
         for task in self._tasks:
             if not task.cancelled() or not task.done():
                 task.cancel()
@@ -144,39 +145,6 @@ class RPCServer():
             response.error = RPCError('RPCServer closed')
         finally:
             return response
-
-    async def _serve_remote_call(self, reader: StreamReader, writer: StreamWriter):
-        """ callback function of asyncio tcp server """
-        request = None
-        from .protocols import PickleProtocol
-        protocol = PickleProtocol(reader, writer)
-        try:
-            while True:
-                request = await protocol.read_request()
-                if request is None:
-                    break
-                response = Response.for_request(request)
-                try:
-                    if request.method in self._rpcs:
-                        self._on_rpc_called(request)
-                        response = await self._process_request(request)
-                        self._on_rpc_return(response)
-                    else:
-                        err = RPCNotFoundError(f"RPC <{request.method}> not found in {self._tag}")
-                        response.error = err
-                        #  print(err)
-                except asyncio.CancelledError:
-                    response.status = 'error'
-                    response.error = RPCError('RPCServer closed')
-                finally:
-                    await protocol.write_response(response)
-            # EOF
-            #  log("connection", "Connection dropped")
-        except asyncio.CancelledError:
-            writer.write_eof()
-            return
-        except Exception as e:
-            print(request, e)
 
     def _on_rpc_called(self, request):
         log(request.method, f"Received request {request}")
