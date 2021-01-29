@@ -63,6 +63,14 @@ class Service(RPCClient, RPCServer):
         self.__type = ONLINE
         RPCServer._run(self, host, port, debug, to_thread)
 
+    async def _init(self):
+        init = self.init()
+        if asyncio.iscoroutine(init):
+            await init
+
+    async def init(self):
+        pass
+
     def _stop(self):
         if self.__type != ONLINE:
             return

@@ -86,6 +86,9 @@ class RPCServer():
                 print('Stopping...')
 
     async def _init_task(self):
+        init = self._init()
+        if asyncio.iscoroutine(init):
+            await init
         await self._listen(self._host, self._port)
         for coro in self._to_schedule:
             self._tasks.append(self._loop.create_task(coro))
@@ -93,6 +96,9 @@ class RPCServer():
             func = getattr(self.__class__, objname)
             if is_task(func):
                 self._tasks.append(self._loop.create_task(func(self)))
+
+    def _init(self):
+        pass
 
     def stop(self):
         self._stop()
