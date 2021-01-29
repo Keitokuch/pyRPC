@@ -1,10 +1,6 @@
 import asyncio
 from functools import wraps
-import queue
-import threading
-from concurrent.futures import ThreadPoolExecutor
 
-from .exceptions import *
 from .utils import start_loop_in_thread
 
 REMOTE = "remote"
@@ -17,8 +13,6 @@ SERVICE_RPC = "_service_rpc"
 RPC_FLAG = "_rpc"
 SYNC_FLAG = "_sync"
 TASK_FLAG = "_task"
-
-SENTINEL = b'\x00\x00SENtiNeL\x00\x00ValUe\x00\x00'
 
 
 def rpc__(f):

@@ -7,6 +7,8 @@ from .exceptions import *
 from .common import *
 from .framework_common import *
 
+__all__ = ['RPCClient']
+
 
 class RPCClient():
     def __init__(self, hostport=None, host=None, port=None, loop=None, rpc_timeout=None, network_timeout=None, protocol=None, **kwargs):

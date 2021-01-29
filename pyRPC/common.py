@@ -4,14 +4,7 @@ from typing import Any, Optional
 
 from .framework_common import *
 
-__all__ = ['rpc', 'task', 'sync_await', 'sync', 'Request', 'Response', 'use_sync_service']
-
-
-
-
-def use_sync_service(sync: bool):
-    global sync_service
-    sync_service = sync
+__all__ = ['rpc', 'task', 'sync', 'Request', 'Response']
 
 
 def rpc(f):
@@ -35,6 +28,7 @@ def task(f):
 def sync(f):
     setattr(f, SYNC_FLAG, True)
     return f
+
 
 class Request:
 

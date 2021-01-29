@@ -1,5 +1,4 @@
 import asyncio
-from asyncio.streams import StreamReader, StreamWriter
 import socket
 import logging
 import traceback
@@ -12,6 +11,9 @@ from .framework_common import *
 from .common import *
 from .utils import *
 from .exceptions import *
+
+
+__all__ = ['RPCServer']
 
 
 LOGGER = logging.getLogger("RPCServer")
