@@ -25,30 +25,6 @@ FIRST_RESPONSE = 'first_response'
 RR = 'round_robin'
 
 
-def make_rpc(func):
-    method = func.__name__
-
-    @wraps(func)
-    async def rpc(self, *args, **kwargs):
-        exception_Q = asyncio.Queue(1)
-        request = Request(method, None, args=args, kwargs=kwargs)
-        call = self._remote_call(request, exception_Q=exception_Q)
-        try:
-            ret = await asyncio.wait_for(call, timeout=self._rpc_timeout)
-        except asyncio.TimeoutError:
-            try:
-                err = exception_Q.get_nowait()
-                raise err
-            except asyncio.QueueEmpty:
-                pass
-            raise RPCTimeoutError(
-                f"RPC '{method}' to {self} timeout after {self._rpc_timeout}s")
-        if ret.exception:
-            raise ret.exception
-        return ret.result
-    rpc._rpc = True
-    return rpc
-
 def make_replica_rpc(func):
     method = func.__name__
 
@@ -74,52 +50,19 @@ def make_replica_rpc(func):
     return rpc
 
 
-def make_group_rpc(func):
-    method = func.__name__
-
-    @wraps(func)
-    async def rpc(self, *args, **kwargs):
-        exception_Q = asyncio.Queue(1)
-        call = self._group_remote_call(method, args, kwargs, exception_Q=exception_Q)
-        try:
-            ret = await asyncio.wait_for(call, timeout=self._rpc_timeout)
-        except asyncio.TimeoutError as e:
-            try:
-                while True:
-                    err = exception_Q.get_nowait()
-                    raise err
-            except asyncio.QueueEmpty:
-                pass
-            raise RPCTimeoutError(
-                f"Group RPC '{method}' timeout after {self._rpc_timeout}s") from e
-        try:
-            while True:
-                err = exception_Q.get_nowait()
-                print(err)
-        except asyncio.QueueEmpty:
-            pass
-        for _, res in ret.items():
-            if res.error:
-                print(res.error)
-        return {tag: res.result for tag, res in ret.items()}
-    rpc._rpc = True
-    return rpc
-
-
 class Service(RPCClient, RPCServer):
-    def __init__(self, tag=None, loop=None, blocking=None, debug=False, **kwargs):
+    def __init__(self, tag=None, loop=None, blocking=None, debug=None, **kwargs):
         tag = tag or self.__default_tag()
         RPCClient.__init__(self, loop=loop, debug=debug, **kwargs)
         RPCServer.__init__(self, tag=tag, loop=loop, debug=debug, **kwargs)
         self._tag = tag
         self._loop = loop
-        self._debug = debug
+        self._debug = debug if debug is not None else config.debug
         self._nodes = {}
         self.__type = LOCAL
         self.__name = self.__class__.__name__
-        self._blocking = blocking if blocking is not None else config.BLOCKING_SERVICE
+        self._blocking = blocking if blocking is not None else config.blocking
         self._service_rpcs = {}
-        self._hash = hash(self.__class__)
         self._anon_nodes_cnt = 0
         self._kwargs = kwargs
 
@@ -134,7 +77,7 @@ class Service(RPCClient, RPCServer):
 
     def _new_anon_tag(self):
         self._anon_nodes_cnt += 1
-        return f"_anonymous_node_{self._anon_nodes_cnt}"
+        return f"anonymous_node_{self._anon_nodes_cnt}"
 
     """ Override RPCServer """
 
@@ -148,7 +91,7 @@ class Service(RPCClient, RPCServer):
     def _run(self, host, port, debug, to_thread):
         if self.__type != LOCAL:
             print(f"Service of {self.__type} type can't run.")
-            sys.exit(1)
+            return
         self.__type = ONLINE
         RPCServer._run(self, host, port, debug, to_thread)
 
@@ -175,6 +118,14 @@ class Service(RPCClient, RPCServer):
             self.on_rpc_return(response)
 
     """ Override RPCClient """
+
+    @property
+    def call(self):
+        raise AttributeError(f"'{self.__class__.__name__}' object has no attribute 'call'")
+
+    @property
+    def async_call(self):
+        raise AttributeError(f"'{self.__class__.__name__}' object has no attribute 'async_call'")
 
     def connect(self, hostport=None, host=None, port=None):
         return self.at(hostport, host, port)
@@ -204,8 +155,7 @@ class Service(RPCClient, RPCServer):
                 args = cmdline.split(" ")
                 if not args:
                     continue
-                main = self.main
-                ret = main(args)
+                ret = self.main(args)
                 if asyncio.iscoroutine(ret):
                     ret = await ret
                 if ret is not None:
@@ -235,17 +185,17 @@ class Service(RPCClient, RPCServer):
 
     # Service Node
 
-    async def _node_call(self, method, args, kwargs):
-        request = Request(method, self._req_num, args, kwargs)
-        self._req_num += 1
-        call = self._remote_call(request)
-        try:
-            ret = await asyncio.wait_for(call, timeout=self._rpc_timeout)
-        except asyncio.TimeoutError:
-            raise RPCTimeoutError("RPC timeout")
-        if ret.error:
-            raise ret.error
-        return ret.result
+    def at(self, hostport=None, tag=None, host=None, port=None):
+        if self.__type != LOCAL:
+            return
+        if hostport:
+            host, port = load_addr(hostport)
+        self._host = host
+        self._port = port
+        if not self._port:
+            raise RPCError("port must be provided to locate service")
+        self._tag = str(tag) or self._tag
+        return self._make_remote_node()
 
     def _make_remote_node(self):
         if self.__type != LOCAL:
@@ -260,19 +210,25 @@ class Service(RPCClient, RPCServer):
         self.__type = REMOTE_NODE
         return self
 
-    def at(self, hostport=None, tag=None, host=None, port=None):
-        if self.__type != LOCAL:
-            return
-        if hostport:
-            host, port = load_addr(hostport)
-        self._host = host
-        self._port = port
-        if not self._port:
-            raise RPCError("port must be provided to locate service")
-        self._tag = str(tag) or self._tag
-        return self._make_remote_node()
+    async def _node_call(self, method, args, kwargs):
+        request = Request(method, self._req_num, args, kwargs)
+        self._req_num += 1
+        call = self._remote_call(request)
+        try:
+            ret = await asyncio.wait_for(call, timeout=self._rpc_timeout)
+        except asyncio.TimeoutError:
+            raise RPCTimeoutError("RPC timeout")
+        if ret.error:
+            raise ret.error
+        return ret.result
 
     # Node group
+
+    def remote(self):
+        if self.__type != LOCAL:
+            print("Error: can't make {self} remote")
+            return
+        return self._make_remote_service()
 
     def _make_remote_service(self):
         if self.__type != LOCAL:
@@ -313,12 +269,6 @@ class Service(RPCClient, RPCServer):
             else:
                 results[call.get_name()] = call.result().result
         return results
-
-    def remote(self):
-        if self.__type != LOCAL:
-            print("Error: can't make {self} remote")
-            return
-        return self._make_remote_service()
 
     @property
     def nodes(self) -> dict:

@@ -7,7 +7,7 @@ from . import server
 from .framework_common import *
 from .common import *
 
-__all__ = ['RPCServerProtocol', 'RPCClientProtocol']
+__all__ = ['RPCServerProtocol', 'RPCClientProtocol', 'RPC_PROTOCOL']
 
 
 MAJOR_VER = 0
@@ -171,3 +171,8 @@ class RPCClientProtocol(asyncio.Protocol):
     def eof_received(self) -> Optional[bool]:
         self._eof = True
         return False    #  Closes transport
+
+RPC_PROTOCOL = {
+    'client': RPCClientProtocol,
+    'server': RPCServerProtocol
+}

@@ -9,19 +9,21 @@ from .framework_common import *
 
 
 class RPCClient():
-    def __init__(self, hostport=None, host=None, port=None, loop=None, rpc_timeout=config.RPC_TIMEOUT, network_timeout=config.NW_TIMEOUT, protocol=None, **kwargs):
+    def __init__(self, hostport=None, host=None, port=None, loop=None, rpc_timeout=None, network_timeout=None, protocol=None, **kwargs):
         if hostport:
             host, port = load_addr(hostport)
         self._host = host
         self._port = port
         self._loop = loop
         self._req_num = 0
-        self._rpc_timeout = rpc_timeout
-        self._network_timeout = network_timeout
+        self._rpc_timeout = rpc_timeout if rpc_timeout is not None else config.rpc_timeout
+        self._network_timeout = network_timeout if network_timeout is not None else config.nw_timeout
         self._conn = None
         self._conn_lock = None
-        self.__protocol_factory = protocol or config.CLIENT_PROTOCOL
+        protocol = protocol or config.protocol
+        self.__protocol_factory = protocol['client'] if isinstance(protocol, dict) else protocol
         self.__received = set()
+        _ = kwargs
 
     def connect(self, hostport=None, host=None, port=None):
         if hostport:

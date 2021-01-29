@@ -18,7 +18,7 @@ LOGGER = logging.getLogger("RPCServer")
 
 
 class RPCServer():
-    def __init__(self, tag=None, host=None, port=None, loop=None, protocol_factory=None, debug=False, **kwargs):
+    def __init__(self, tag=None, host=None, port=None, loop=None, protocol=None, debug=None, **kwargs):
         self._tag = tag or "RPCServer"
         self._host = host
         self._port = port
@@ -26,10 +26,12 @@ class RPCServer():
         self._listener = None
         self._rpcs = {}
         self._rpcs_collected = False
-        self._debug = debug
+        self._debug = debug if debug is not None else config.debug
         self._to_schedule = []
         self._tasks = []
-        self.__protocol_factory = protocol_factory or config.SERVER_PROTOCOL
+        protocol = protocol or config.protocol
+        self.__protocol_factory = protocol['server'] if isinstance(protocol, dict) else protocol
+        _ = kwargs
 
     def _set_debug(self, debug):
         self._debug = debug
@@ -168,7 +170,6 @@ class RPCServer():
             #      result = rpc(*request.args, **request.kwargs)
             result = await self._loop.run_in_executor(
                 None, rpc, *request.args, **request.kwargs)
-            #  result = rpc(*request.args, **request.kwargs)
         except Exception as e:
             #  Catch any exception raised in rpc function
             _name = self.__class__.__name__

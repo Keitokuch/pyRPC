@@ -1,7 +1,9 @@
 from .import protocols
 
-RPC_TIMEOUT=3
-NW_TIMEOUT=3
+rpc_timeout=3
+nw_timeout=3
+protocol = protocols.RPC_PROTOCOL
 SERVER_PROTOCOL = protocols.RPCServerProtocol
 CLIENT_PROTOCOL = protocols.RPCClientProtocol
-BLOCKING_SERVICE = True
+blocking = True
+debug = True
