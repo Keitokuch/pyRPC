@@ -33,6 +33,7 @@ class RPCServer():
         self._tasks = []
         protocol = protocol or config.protocol
         self.__protocol_factory = protocol['server'] if isinstance(protocol, dict) else protocol
+        self._transports = []
         _ = kwargs
 
     def _set_debug(self, debug):
@@ -81,7 +82,7 @@ class RPCServer():
             try:
                 self._loop.run_forever()
             except (KeyboardInterrupt, SystemExit, NodeStopException):
-                self._clean_up()
+                self._loop.run_until_complete(self._clean_up())
                 print()
                 print('Stopping...')
 
@@ -104,19 +105,25 @@ class RPCServer():
         self._stop()
 
     def _stop(self):
-        if not self._loop.is_running():
+        if not self._loop or not self._loop.is_running():
             return
-        self._clean_up()
-        self._loop.call_soon_threadsafe(self._loop.stop)
+        asyncio.run_coroutine_threadsafe(self._stop_task(), self._loop)
         print()
         print('Stopping..')
 
-    def _clean_up(self):
+    async def _stop_task(self):
+        await self._clean_up()
+        self._loop.call_soon_threadsafe(self._loop.stop)
+
+    async def _clean_up(self):
         if self._listener:
             self._listener.close()
+            await self._listener.wait_closed()
         for task in self._tasks:
-            if not task.cancelled() or not task.done():
-                task.cancel()
+            task.cancel()
+        await asyncio.gather(*self._tasks)
+        for transport in self._transports:
+            transport.close()
 
     """ Serving """
 

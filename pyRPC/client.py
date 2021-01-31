@@ -1,4 +1,5 @@
 import asyncio
+from types import MethodType
 
 from . import config
 
@@ -11,13 +12,14 @@ __all__ = ['RPCClient']
 
 
 class RPCClient():
-    def __init__(self, hostport=None, host=None, port=None, loop=None, rpc_timeout=None, network_timeout=None, protocol=None, **kwargs):
+    def __init__(self, hostport=None, host=None, port=None, loop=None, blocking=None, rpc_timeout=None, network_timeout=None, protocol=None, **kwargs):
         if hostport:
             host, port = load_addr(hostport)
         self._host = host
         self._port = port
         self._loop = loop
         self._req_num = 0
+        self._blocking = blocking if blocking is not None else config.blocking
         self._rpc_timeout = rpc_timeout if rpc_timeout is not None else config.rpc_timeout
         self._network_timeout = network_timeout if network_timeout is not None else config.nw_timeout
         self._conn = None
@@ -65,12 +67,26 @@ class RPCClient():
         return response.result
 
     def call(self, method, *args, **kwargs):
-        self._loop = self._loop or get_event_loop()
-        request = Request(method, None, args, kwargs)
-        response = sync_await(self._remote_call(request), self._loop)
-        if response.error:
-            raise response.error
-        return response.result
+        def blocking_call(self, method, *args, **kwargs):
+            request = Request(method, None, args, kwargs)
+            response = sync_await(self._remote_call(request), self._loop)
+            if response.error:
+                raise response.err
+            return response.result
+
+        async def async_call(self, method, *args, **kwargs):
+            request = Request(method, None, args, kwargs)
+            response = await self._remote_call(request)
+            if response.error:
+                raise response
+            return response.error
+
+        if self._blocking:
+            self._loop = self._loop or get_event_loop()
+            setattr(self, 'call', MethodType(blocking_call, self))
+        else:
+            setattr(self, 'call', MethodType(async_call, self))
+        return self.call(method, *args, **kwargs)
 
     async def _remote_call(self, request, response_Q=None, exception_Q=None):
         self._conn_lock = self._conn_lock or asyncio.Lock()
@@ -91,8 +107,6 @@ class RPCClient():
             err = RPCConnectionTimeoutError(f"Timed out waiting for response")
             if exception_Q:
                 await exception_Q.put(err)
-            else:
-                raise err
             response.error = err
             return response
         if response_Q:

@@ -60,6 +60,7 @@ class RPCServerProtocol(asyncio.Protocol):
         self._curr_seq = None
         
     def connection_made(self, transport: transports.Transport) -> None:
+        self.server._transports.append(transport)
         self.transport = transport
         self.buffer = bytearray()
         self._eof = False

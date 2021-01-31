@@ -1,3 +1,4 @@
+import asyncio
 from pyRPC import rpc, Service
 
 
@@ -27,6 +28,10 @@ class Calculator(Service):
     @rpc
     def stop(self):
         super().stop()
+
+    async def clean_up(self):
+        await asyncio.sleep(0.5)
+        print('calc clean up completed')
 
     def on_rpc_called(self, request):
         #  print('called', request.method)

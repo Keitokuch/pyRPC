@@ -76,12 +76,12 @@ class Service(RPCClient, RPCServer):
             return
         super()._stop()
 
-    def _clean_up(self):
-        super()._clean_up()
+    async def _clean_up(self):
         cleanup = self.clean_up()
         if asyncio.iscoroutine(cleanup):
-            asyncio.get_event_loop().run_until_complete(cleanup)
+            await cleanup
         self.__type = LOCAL
+        await super()._clean_up()
 
     def _on_rpc_called(self, request):
         if request.method in self._service_rpcs:
@@ -95,13 +95,11 @@ class Service(RPCClient, RPCServer):
 
     """ Override RPCClient """
 
-    @property
-    def call(self):
-        raise AttributeError(f"'{self.__class__.__name__}' object has no attribute 'call'")
-
-    @property
-    def async_call(self):
-        raise AttributeError(f"'{self.__class__.__name__}' object has no attribute 'async_call'")
+    def call(self, method, *args, **kwargs):
+        if self.__type in [REMOTE, REMOTE_NODE]:
+            rpc = self._rpcs[method]
+            return rpc(*args, **kwargs)
+        raise RuntimeError(f'Cannot make rpc calls with {self.__type} service')
 
     def connect(self, hostport=None, host=None, port=None):
         return self.at(hostport, host, port)
@@ -159,6 +157,17 @@ class Service(RPCClient, RPCServer):
             return sync_rpc
         return async_rpc
 
+    def _make_rpcs(self, call_routine):
+        for fname in dir(self.__class__):
+            func = getattr(self.__class__, fname)
+            if is_rpc(func):
+                rpc = self._make_rpc(func, call_routine)
+                rpc = MethodType(rpc, self)
+                setattr(self, fname, rpc)
+                self._rpcs[fname] = rpc
+                if is_service_rpc(func):
+                    self._service_rpcs[fname] = rpc
+
     # Service Node
 
     def at(self, hostport=None, tag=None, host=None, port=None):
@@ -178,11 +187,7 @@ class Service(RPCClient, RPCServer):
             return
         if self._blocking:
             self._loop = start_loop_in_thread(self._loop, daemon=True, debug=self._debug)
-        for fname in dir(self.__class__):
-            func = getattr(self.__class__, fname)
-            if is_rpc(func):
-                rpc = self._make_rpc(func, self._node_call)
-                setattr(self, fname, MethodType(rpc, self))
+        self._make_rpcs(self._node_call)
         self.__type = REMOTE_NODE
         return self
 
@@ -211,11 +216,7 @@ class Service(RPCClient, RPCServer):
             return
         if self._blocking:
             self._loop = start_loop_in_thread(self._loop, daemon=True, debug=self._debug)
-        for fname in dir(self.__class__):
-            func = getattr(self.__class__, fname)
-            if is_rpc(func):
-                rpc = self._make_rpc(func, self._group_call)
-                setattr(self, fname, MethodType(rpc, self))
+        self._make_rpcs(self._group_call)
         self.__type = REMOTE
         return self
 
@@ -353,7 +354,15 @@ class Service(RPCClient, RPCServer):
         elif self.__type == REMOTE_NODE:
             return f"{self._tag}({self._host}, {self._port})"
         else:
-            return f"Service { self.__name } of invalid type: { self.__type }"
+            return f"{ self.__name } Service of invalid type: { self.__type }"
+
+    def __repr__(self) -> str:
+        if self.__type == ONLINE:
+            return f"<{self.__name} Service type={self.__type} debug={self._debug} host={self._host} port={self._port}>"
+        elif self.__type == REMOTE_NODE:
+            return f"<{self.__name} Service type={self.__type} blocking={self._blocking} debug={self._debug} host={self._host} port={self._port}>"
+        else:
+            return f"<{self.__name} Service type={self.__type} blocking={self._blocking} debug={self._debug}>"
 
     # For comparing
     def __eq__(self, other):

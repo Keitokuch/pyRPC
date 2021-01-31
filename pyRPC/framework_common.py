@@ -3,9 +3,9 @@ from functools import wraps
 
 from .utils import start_loop_in_thread
 
-REMOTE = "remote"
+REMOTE = "remote_group"
 LOCAL = "local"
-ONLINE = "online"
+ONLINE = "running"
 REMOTE_NODE = "remote_node"
 
 SERVICE_RPC = "_service_rpc"
